@@ -121,20 +121,46 @@ async function loadDashboard(creator) {
       `&deleted_at=is.null` +
       `&day=gte.${weekStart}&and=(day.lte.${weekEnd})&select=username`);
 
+    // Videos are counted per invoice group: busiest single account within each
+    // group, then the groups added together. That mirrors base pay exactly, so
+    // this figure and the invoice cannot disagree. A creator on two groups is
+    // on two contracts and owes the work twice.
+    const accounts = await sb('GET',
+      `creator_accounts?select=username,invoice_group_id,active`);
+    const groupOf = {};
+    accounts.forEach(a => {
+      if (a.username) groupOf[String(a.username).toLowerCase()] = a.invoice_group_id;
+    });
+
     const perAccount = {};
     posts.forEach(p => {
-      const u = p.username || '';
+      const u = String(p.username || '').toLowerCase();
       if (u) perAccount[u] = (perAccount[u] || 0) + 1;
     });
-    const videos = Object.keys(perAccount).length
-      ? Math.max(...Object.values(perAccount))
-      : 0;
+
+    const perGroup = {};
+    Object.entries(perAccount).forEach(([username, count]) => {
+      const g = groupOf[username] || '_ungrouped';
+      if (count > (perGroup[g] || 0)) perGroup[g] = count;
+    });
+    const videos = Object.values(perGroup).reduce((a, b) => a + b, 0);
+
+    // Target is the sum of this creator's group targets.
+    let target = creator.weekly_target || 0;
+    try {
+      const groups = await sb('GET',
+        `invoice_groups?creator_id=eq.${creator.id}&select=weekly_video_target,active`);
+      const summed = groups
+        .filter(g => g.active !== false)
+        .reduce((a, g) => a + (g.weekly_video_target || 0), 0);
+      if (summed > 0) target = summed;
+    } catch { /* fall back to the creator-level number */ }
 
     posting = {
       days_posted_this_week: daysPosted,
       posting_days_per_week: creator.posting_days_per_week || 0,
       videos_this_week: videos,
-      weekly_video_target: creator.weekly_target || 0,
+      weekly_video_target: target,
       week_start: weekStart,
       week_end: weekEnd
     };
