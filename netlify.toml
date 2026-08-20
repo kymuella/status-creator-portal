@@ -1,0 +1,14 @@
+[build]
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+
+# The portal is for creators only. Nothing here should be indexed.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
