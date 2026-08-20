@@ -119,7 +119,8 @@ async function loadDashboard(creator) {
     const posts = await sb('GET',
       `posting_posts?creator_name=eq.${encodeURIComponent(creator.name)}` +
       `&deleted_at=is.null` +
-      `&day=gte.${weekStart}&and=(day.lte.${weekEnd})&select=username`);
+      `&day=gte.${weekStart}&and=(day.lte.${weekEnd})` +
+      `&select=username,platform,content_key,video_id`);
 
     // Videos are counted per invoice group: busiest single account within each
     // group, then the groups added together. That mirrors base pay exactly, so
@@ -132,16 +133,25 @@ async function loadDashboard(creator) {
       if (a.username) groupOf[String(a.username).toLowerCase()] = a.invoice_group_id;
     });
 
-    const perAccount = {};
+    // Count unique CREATIVES, not rows. The same video cross-posted to TikTok
+    // and Instagram is two rows but one piece of work, and both rows often
+    // share a username, so counting rows double-counts it. content_key is
+    // caption + duration — the same key base pay uses.
+    const creatives = {};   // "username|platform" -> Set of content keys
     posts.forEach(p => {
       const u = String(p.username || '').toLowerCase();
-      if (u) perAccount[u] = (perAccount[u] || 0) + 1;
+      if (!u) return;
+      const k = u + '|' + String(p.platform || '').toLowerCase();
+      const creative = p.content_key || p.video_id || '';
+      (creatives[k] = creatives[k] || new Set()).add(creative);
     });
 
+    // Within each invoice group take the busiest platform, then add the groups.
     const perGroup = {};
-    Object.entries(perAccount).forEach(([username, count]) => {
+    Object.entries(creatives).forEach(([key, set]) => {
+      const username = key.split('|')[0];
       const g = groupOf[username] || '_ungrouped';
-      if (count > (perGroup[g] || 0)) perGroup[g] = count;
+      if (set.size > (perGroup[g] || 0)) perGroup[g] = set.size;
     });
     const videos = Object.values(perGroup).reduce((a, b) => a + b, 0);
 
