@@ -118,6 +118,7 @@ async function loadDashboard(creator) {
     // most of it is the same creative cross-posted.
     const posts = await sb('GET',
       `posting_posts?creator_name=eq.${encodeURIComponent(creator.name)}` +
+      `&deleted_at=is.null` +
       `&day=gte.${weekStart}&and=(day.lte.${weekEnd})&select=username`);
 
     const perAccount = {};
@@ -143,6 +144,7 @@ async function loadDashboard(creator) {
   try {
     recent = await sb('GET',
       `posting_posts?creator_name=eq.${encodeURIComponent(creator.name)}` +
+      `&deleted_at=is.null` +
       `&select=day,platform,video_url,views&order=day.desc&limit=8`);
   } catch { /* optional */ }
 
