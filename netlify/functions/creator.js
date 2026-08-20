@@ -96,15 +96,47 @@ async function loadDashboard(creator) {
     }
   }
 
-  // Posting figures come from the tracker the team already runs. Read-only
-  // here, and only this creator's own numbers.
+  // Posting figures are computed here from the raw daily data, NOT read from
+  // the posting_status summary table.
+  //
+  // That summary is written whenever the sweep last ran, with whatever counting
+  // logic was deployed at the time, so reading it means the portal and the
+  // tracker can quietly disagree. Computing from the same source both use keeps
+  // one answer to "how many videos this week".
+  const { weekStart, weekEnd } = currentWeek();
   let posting = null;
+
   try {
-    const rows = await sb('GET',
-      `posting_status?creator_name=eq.${encodeURIComponent(creator.name)}` +
-      `&select=days_posted_this_week,posting_days_per_week,videos_this_week,` +
-      `weekly_video_target,last_post_date,week_status`);
-    posting = rows[0] || null;
+    const days = await sb('GET',
+      `posting_days?creator_name=eq.${encodeURIComponent(creator.name)}` +
+      `&day=gte.${weekStart}&and=(day.lte.${weekEnd})&select=day,unique_posts`);
+
+    const daysPosted = days.filter(d => (d.unique_posts || 0) > 0).length;
+
+    // Videos are counted on the busiest SINGLE account, matching how base pay
+    // is calculated. Adding every account together overstates the work, because
+    // most of it is the same creative cross-posted.
+    const posts = await sb('GET',
+      `posting_posts?creator_name=eq.${encodeURIComponent(creator.name)}` +
+      `&day=gte.${weekStart}&and=(day.lte.${weekEnd})&select=username`);
+
+    const perAccount = {};
+    posts.forEach(p => {
+      const u = p.username || '';
+      if (u) perAccount[u] = (perAccount[u] || 0) + 1;
+    });
+    const videos = Object.keys(perAccount).length
+      ? Math.max(...Object.values(perAccount))
+      : 0;
+
+    posting = {
+      days_posted_this_week: daysPosted,
+      posting_days_per_week: creator.posting_days_per_week || 0,
+      videos_this_week: videos,
+      weekly_video_target: creator.weekly_target || 0,
+      week_start: weekStart,
+      week_end: weekEnd
+    };
   } catch { /* the dashboard is still useful without it */ }
 
   let recent = [];
@@ -148,6 +180,18 @@ async function setStatus(creator, body) {
 }
 
 /* ---------------------------------------------------------------- */
+
+// Monday to Sunday, matching the tracker's week.
+function currentWeek(){
+  const now = new Date();
+  const day = (now.getUTCDay() + 6) % 7;          // 0 = Monday
+  const start = new Date(now);
+  start.setUTCDate(now.getUTCDate() - day);
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 6);
+  const iso = d => d.toISOString().slice(0, 10);
+  return { weekStart: iso(start), weekEnd: iso(end) };
+}
 
 async function sb(method, path, payload, extraHeaders) {
   const headers = {
